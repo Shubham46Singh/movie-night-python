@@ -1,0 +1,63 @@
+
+version: 2.1
+
+jobs:
+  qa:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pytest httpx ruff detect-secrets
+      - run:
+          name: Python quality checks
+          command: |
+            ruff check app tests
+      - run:
+          name: Run tests
+          command: |
+            pytest -q
+      - run:
+          name: Scan for secrets
+          command: |
+            detect-secrets scan --all-files \
+              --exclude-files '(^|/)(\.git|\.venv|venv)/' \
+              > /tmp/secrets-scan.json
+            cat /tmp/secrets-scan.json
+            python -c "import json,sys; d=json.load(open('/tmp/secrets-scan.json')); findings=[v for v in d.get('results',{}).values() if v]; print('Potential secrets found!' if findings else 'No potential secrets found.'); sys.exit(1 if findings else 0)"
+
+  build:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build Docker image
+          command: |
+            docker build -t movie-night:${CIRCLE_SHA1} .
+
+workflows:
+  verify-and-build:
+    jobs:
+      - qa:
+          filters:
+            branches:
+              only:
+                - feature/ci-docker-setup
+                - main
+                - staging
+                - prod
+      - build:
+          requires:
+            - qa
+          filters:
+            branches:
+              only:
+                - feature/ci-docker-setup
+                - main
+
